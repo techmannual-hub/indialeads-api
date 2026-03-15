@@ -1,0 +1,611 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// TENANT
+// ─────────────────────────────────────────
+
+model Tenant {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique
+  phone_number_id     String?
+  wa_business_id      String?
+  wa_access_token     String?  // AES-256 encrypted
+  wa_webhook_secret   String?
+  waba_verified       Boolean  @default(false)
+  is_demo             Boolean  @default(false)
+  plan                Plan     @default(FREE)
+  is_active           Boolean  @default(true)
+  daily_message_limit Int      @default(1000)
+  messages_sent_today Int      @default(0)
+  messages_reset_at   DateTime @default(now())
+  onboarding_step     Int      @default(0)
+  onboarding_done     Boolean  @default(false)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  user             User?
+  leads            Lead[]
+  tags             Tag[]
+  custom_fields    CustomField[]
+  broadcasts       Broadcast[]
+  templates        Template[]
+  automations      Automation[]
+  conversations    Conversation[]
+  messages         Message[]
+  catalog_products CatalogProduct[]
+  analytics_events AnalyticsEvent[]
+  lead_uploads     LeadUpload[]
+  automation_logs  AutomationLog[]
+  followups        Followup[]
+  media_assets     MediaAsset[]
+  license          License?
+
+  @@index([slug])
+}
+
+enum Plan {
+  FREE
+  STARTER
+  GROWTH
+  ENTERPRISE
+}
+
+// ─────────────────────────────────────────
+// USER (one per tenant)
+// ─────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  tenant_id     String    @unique
+  email         String    @unique
+  password_hash String
+  name          String
+  avatar_url    String?
+  is_active     Boolean   @default(true)
+  last_login_at DateTime?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  tenant        Tenant    @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([tenant_id])
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  user_id    String
+  token_hash String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  @@index([user_id])
+}
+
+// ─────────────────────────────────────────
+// LEADS
+// ─────────────────────────────────────────
+
+model Lead {
+  id                String     @id @default(cuid())
+  tenant_id         String
+  name              String
+  phone             String     // E.164: +91XXXXXXXXXX
+  email             String?
+  products          String[]   // array of product names
+  source            LeadSource @default(MANUAL)
+  status            LeadStatus @default(PENDING)
+  stage             String?
+  label             String?
+  notes             String?
+  opt_out           Boolean    @default(false)
+  last_contacted_at DateTime?
+  cooling_until     DateTime?  // set when status → COOLING
+  upload_id         String?
+  created_at        DateTime   @default(now())
+  updated_at        DateTime   @updatedAt
+
+  tenant               Tenant               @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  upload               LeadUpload?          @relation(fields: [upload_id], references: [id])
+  tags                 LeadTag[]
+  custom_values        CustomFieldValue[]
+  conversations        Conversation[]
+  broadcast_recipients BroadcastRecipient[]
+  followups            Followup[]
+
+  @@unique([tenant_id, phone])
+  @@index([tenant_id])
+  @@index([tenant_id, status])
+  @@index([tenant_id, stage])
+  @@index([phone])
+}
+
+enum LeadSource {
+  MANUAL
+  EXCEL_UPLOAD
+  API
+  WEBHOOK
+  DEMO
+}
+
+enum LeadStatus {
+  PENDING
+  LIVE
+  DEAD
+  COOLING
+}
+
+model LeadUpload {
+  id           String       @id @default(cuid())
+  tenant_id    String
+  file_name    String
+  s3_key       String
+  total_rows   Int          @default(0)
+  imported     Int          @default(0)
+  updated      Int          @default(0)
+  skipped      Int          @default(0)
+  failed       Int          @default(0)
+  status       UploadStatus @default(PENDING)
+  error_log    Json?
+  created_at   DateTime     @default(now())
+  completed_at DateTime?
+
+  tenant       Tenant       @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  leads        Lead[]
+
+  @@index([tenant_id])
+}
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+// ─────────────────────────────────────────
+// TAGS & CUSTOM FIELDS
+// ─────────────────────────────────────────
+
+model Tag {
+  id         String    @id @default(cuid())
+  tenant_id  String
+  name       String
+  color      String    @default("#6366f1")
+  created_at DateTime  @default(now())
+
+  tenant     Tenant    @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  leads      LeadTag[]
+
+  @@unique([tenant_id, name])
+  @@index([tenant_id])
+}
+
+model LeadTag {
+  lead_id    String
+  tag_id     String
+  created_at DateTime @default(now())
+
+  lead       Lead     @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tag_id], references: [id], onDelete: Cascade)
+
+  @@id([lead_id, tag_id])
+}
+
+model CustomField {
+  id          String          @id @default(cuid())
+  tenant_id   String
+  name        String
+  key         String
+  field_type  CustomFieldType
+  is_required Boolean         @default(false)
+  options     Json?
+  created_at  DateTime        @default(now())
+
+  tenant      Tenant          @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  values      CustomFieldValue[]
+
+  @@unique([tenant_id, key])
+  @@index([tenant_id])
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  BOOLEAN
+}
+
+model CustomFieldValue {
+  id         String      @id @default(cuid())
+  lead_id    String
+  field_id   String
+  value      String?
+  updated_at DateTime    @updatedAt
+
+  lead       Lead        @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+  field      CustomField @relation(fields: [field_id], references: [id], onDelete: Cascade)
+
+  @@unique([lead_id, field_id])
+}
+
+// ─────────────────────────────────────────
+// TEMPLATES
+// ─────────────────────────────────────────
+
+model Template {
+  id               String           @id @default(cuid())
+  tenant_id        String
+  name             String
+  wa_template_id   String?
+  category         TemplateCategory
+  language         String           @default("en")
+  status           TemplateStatus   @default(DRAFT)
+  header           Json?
+  body             String
+  footer           String?
+  buttons          Json?
+  variables        Json?
+  rejection_reason String?
+  created_at       DateTime         @default(now())
+  updated_at       DateTime         @updatedAt
+
+  tenant           Tenant           @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  broadcasts       Broadcast[]
+  followups        Followup[]
+
+  @@unique([tenant_id, name])
+  @@index([tenant_id])
+}
+
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PAUSED
+}
+
+// ─────────────────────────────────────────
+// BROADCASTS
+// ─────────────────────────────────────────
+
+model Broadcast {
+  id              String          @id @default(cuid())
+  tenant_id       String
+  name            String
+  template_id     String
+  variable_map    Json?
+  filters         Json?
+  total_count     Int             @default(0)
+  sent_count      Int             @default(0)
+  delivered_count Int             @default(0)
+  read_count      Int             @default(0)
+  failed_count    Int             @default(0)
+  status          BroadcastStatus @default(DRAFT)
+  scheduled_at    DateTime?
+  started_at      DateTime?
+  completed_at    DateTime?
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+
+  tenant          Tenant               @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  template        Template             @relation(fields: [template_id], references: [id])
+  recipients      BroadcastRecipient[]
+
+  @@index([tenant_id])
+  @@index([tenant_id, status])
+}
+
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+model BroadcastRecipient {
+  id             String                @id @default(cuid())
+  broadcast_id   String
+  lead_id        String
+  wa_message_id  String?
+  status         MessageDeliveryStatus @default(QUEUED)
+  sent_at        DateTime?
+  delivered_at   DateTime?
+  read_at        DateTime?
+  failed_at      DateTime?
+  failure_reason String?
+  created_at     DateTime              @default(now())
+
+  broadcast      Broadcast             @relation(fields: [broadcast_id], references: [id], onDelete: Cascade)
+  lead           Lead                  @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@unique([broadcast_id, lead_id])
+  @@index([broadcast_id])
+  @@index([wa_message_id])
+}
+
+// ─────────────────────────────────────────
+// FOLLOWUPS
+// ─────────────────────────────────────────
+
+model Followup {
+  id            String        @id @default(cuid())
+  tenant_id     String
+  lead_id       String
+  template_id   String?
+  stage         FollowupStage @default(TEMPLATE1)
+  status        FollowupStatus @default(PENDING)
+  wa_message_id String?
+  scheduled_at  DateTime?
+  sent_at       DateTime?
+  replied_at    DateTime?
+  notes         String?
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+
+  tenant        Tenant        @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  lead          Lead          @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+  template      Template?     @relation(fields: [template_id], references: [id])
+
+  @@index([tenant_id])
+  @@index([lead_id])
+  @@index([tenant_id, status])
+}
+
+enum FollowupStage {
+  TEMPLATE1
+  TEMPLATE2
+  TEMPLATE3
+}
+
+enum FollowupStatus {
+  PENDING
+  SENT
+  REPLIED
+  NO_REPLY
+  DEAD
+}
+
+// ─────────────────────────────────────────
+// CONVERSATIONS & MESSAGES (Inbox)
+// ─────────────────────────────────────────
+
+model Conversation {
+  id              String             @id @default(cuid())
+  tenant_id       String
+  lead_id         String
+  status          ConversationStatus @default(OPEN)
+  unread_count    Int                @default(0)
+  last_message_at DateTime?
+  wa_contact_name String?
+  created_at      DateTime           @default(now())
+  updated_at      DateTime           @updatedAt
+
+  tenant          Tenant             @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  lead            Lead               @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+  messages        Message[]
+
+  @@unique([tenant_id, lead_id])
+  @@index([tenant_id])
+  @@index([tenant_id, status])
+  @@index([tenant_id, last_message_at])
+}
+
+enum ConversationStatus {
+  OPEN
+  RESOLVED
+  PENDING
+}
+
+model Message {
+  id              String                @id @default(cuid())
+  tenant_id       String
+  conversation_id String
+  wa_message_id   String?
+  direction       MessageDirection
+  type            MessageType
+  content         Json
+  status          MessageDeliveryStatus @default(SENT)
+  sent_at         DateTime?
+  delivered_at    DateTime?
+  read_at         DateTime?
+  failed_at       DateTime?
+  failure_reason  String?
+  created_at      DateTime              @default(now())
+
+  tenant          Tenant                @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  conversation    Conversation          @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([tenant_id])
+  @@index([conversation_id])
+  @@index([wa_message_id])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  TEMPLATE
+  INTERACTIVE
+  REACTION
+  LOCATION
+  STICKER
+  UNSUPPORTED
+}
+
+enum MessageDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// ─────────────────────────────────────────
+// AUTOMATIONS
+// ─────────────────────────────────────────
+
+model Automation {
+  id          String            @id @default(cuid())
+  tenant_id   String
+  name        String
+  description String?
+  trigger     AutomationTrigger
+  conditions  Json?
+  actions     Json
+  is_active   Boolean           @default(true)
+  run_count   Int               @default(0)
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+
+  tenant      Tenant            @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  logs        AutomationLog[]
+
+  @@index([tenant_id])
+  @@index([tenant_id, is_active])
+}
+
+enum AutomationTrigger {
+  LEAD_CREATED
+  LEAD_STATUS_CHANGED
+  LEAD_TAG_ADDED
+  MESSAGE_RECEIVED
+  BROADCAST_READ
+  DATE_BASED
+}
+
+model AutomationLog {
+  id            String     @id @default(cuid())
+  tenant_id     String
+  automation_id String
+  lead_id       String?
+  status        String
+  result        Json?
+  error         String?
+  created_at    DateTime   @default(now())
+
+  tenant        Tenant     @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  automation    Automation @relation(fields: [automation_id], references: [id], onDelete: Cascade)
+
+  @@index([tenant_id])
+  @@index([automation_id])
+}
+
+// ─────────────────────────────────────────
+// CATALOG
+// ─────────────────────────────────────────
+
+model CatalogProduct {
+  id            String   @id @default(cuid())
+  tenant_id     String
+  name          String
+  description   String?
+  price         Decimal? @db.Decimal(10, 2)
+  currency      String   @default("INR")
+  sku           String?
+  image_url     String?
+  s3_key        String?
+  wa_catalog_id String?
+  wa_product_id String?
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  tenant        Tenant   @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+
+  @@index([tenant_id])
+}
+
+// ─────────────────────────────────────────
+// MEDIA ASSETS
+// ─────────────────────────────────────────
+
+model MediaAsset {
+  id           String    @id @default(cuid())
+  tenant_id    String
+  file_name    String
+  file_type    String
+  mime_type    String
+  s3_key       String
+  s3_url       String
+  wa_media_id  String?   // returned by WA after upload
+  file_size    Int
+  uploaded_at  DateTime  @default(now())
+
+  tenant       Tenant    @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+
+  @@index([tenant_id])
+}
+
+// ─────────────────────────────────────────
+// ANALYTICS
+// ─────────────────────────────────────────
+
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  tenant_id  String
+  event_type String
+  entity_id  String?
+  metadata   Json?
+  created_at DateTime @default(now())
+
+  tenant     Tenant   @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+
+  @@index([tenant_id])
+  @@index([tenant_id, event_type])
+  @@index([tenant_id, created_at])
+}
+
+// ─────────────────────────────────────────
+// LICENSE
+// ─────────────────────────────────────────
+
+model License {
+  id           String        @id @default(cuid())
+  tenant_id    String        @unique
+  license_key  String        @unique
+  plan         Plan
+  status       LicenseStatus @default(ACTIVE)
+  max_leads    Int           @default(1000)
+  max_messages Int           @default(1000)
+  expires_at   DateTime?
+  activated_at DateTime      @default(now())
+  created_at   DateTime      @default(now())
+  updated_at   DateTime      @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+
+  @@index([license_key])
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  TRIAL
+}
