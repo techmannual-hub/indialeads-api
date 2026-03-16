@@ -27,13 +27,20 @@ export function createApp(): Application {
   const app = express();
 
   // ── Security & parsing ─────────────────────────────────────────────────────
-  app.use(
-    helmet({
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-    })
-  );
-  app.use(cors());
-app.options('*', cors());
+  app.use(cors({
+  origin: '*',
+  credentials: false,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.options('*', cors({
+  origin: '*',
+  credentials: false,
+}));
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+}));
   app.use(compression());
   app.use(requestLogger);
 
