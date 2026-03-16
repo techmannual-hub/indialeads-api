@@ -33,13 +33,13 @@ export function createApp(): Application {
     })
   );
   app.use(
-    cors({
-      origin: [env.DASHBOARD_URL, env.WEB_URL],
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
-    })
-  );
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
   app.use(compression());
   app.use(requestLogger);
 
