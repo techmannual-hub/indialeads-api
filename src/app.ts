@@ -49,7 +49,8 @@ export function createApp(): Application {
 
   // ── Global rate limiter ────────────────────────────────────────────────────
   app.use('/api', globalRateLimiter);
-
+// ── Admin routes (auth handled inside) ──
+app.use('/api/admin', adminRoutes);
   // ── Health check ──────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', ts: new Date().toISOString(), env: env.NODE_ENV });
