@@ -6,8 +6,68 @@ import { env } from './config/env';
 import prisma from './config/database';
 import { getRedisClient } from './config/redis';
 
+async function runSeed() {
+  try {
+    const bcrypt = await import('bcryptjs');
+    const crypto = await import('crypto');
+
+    // Check if demo user already exists
+    const existing = await prisma.user.findUnique({
+      where: { email: 'demo@indialeadscrm.com' },
+    });
+
+    if (existing) {
+      console.log('✅ Demo account already exists, skipping seed');
+      return;
+    }
+
+    console.log('🌱 Seeding demo account...');
+
+    const tenant = await prisma.tenant.upsert({
+      where: { slug: 'demo' },
+      update: {},
+      create: {
+        name: 'Demo Company',
+        slug: 'demo',
+        is_demo: true,
+        plan: 'STARTER',
+        onboarding_done: true,
+      },
+    });
+
+    const passwordHash = await bcrypt.default.hash('demo@1234', 12);
+    const user = await prisma.user.upsert({
+      where: { email: 'demo@indialeadscrm.com' },
+      update: {},
+      create: {
+        tenant_id: tenant.id,
+        email: 'demo@indialeadscrm.com',
+        password_hash: passwordHash,
+        name: 'Demo User',
+      },
+    });
+
+    await prisma.license.upsert({
+      where: { tenant_id: tenant.id },
+      update: {},
+      create: {
+        tenant_id: tenant.id,
+        license_key: `STARTER-${crypto.default.randomBytes(4).toString('hex').toUpperCase()}-DEMO`,
+        plan: 'STARTER',
+        status: 'ACTIVE',
+        max_leads: 5000,
+        max_messages: 1000,
+      },
+    });
+
+    console.log(`✅ Seeded: ${user.email} / demo@1234`);
+  } catch (err) {
+    console.error('⚠️ Seed failed (non-fatal, app continues):', err);
+    // Do NOT process.exit — let the app start anyway
+  }
+}
+
 async function bootstrap() {
-  // Validate DB + Redis connections before accepting traffic
   try {
     await prisma.$connect();
     console.log('✅ PostgreSQL connected');
@@ -25,48 +85,32 @@ async function bootstrap() {
     process.exit(1);
   }
 
+  // Run seed (safe — won't crash the app if it fails)
+  await runSeed();
+
   const app = createApp();
   const server = http.createServer(app);
 
-  // Socket.io
   initSocket(server);
-
-  // Cron jobs
   startCronJobs();
 
   server.listen(env.PORT, () => {
     console.log(`🚀 IndiaLeads API running on port ${env.PORT} [${env.NODE_ENV}]`);
-    console.log(`   API:     ${env.API_URL}`);
-    console.log(`   Health:  ${env.API_URL}/health`);
   });
 
-  // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`\n⏳ ${signal} received — shutting down gracefully...`);
     server.close(async () => {
       await prisma.$disconnect();
-      console.log('👋 Server closed');
       process.exit(0);
     });
-
-    // Force exit after 10s
-    setTimeout(() => {
-      console.error('🔥 Forced shutdown after timeout');
-      process.exit(1);
-    }, 10_000);
+    setTimeout(() => process.exit(1), 10_000);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
-
-  process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled rejection:', reason);
-  });
-
-  process.on('uncaughtException', (err) => {
-    console.error('Uncaught exception:', err);
-    process.exit(1);
-  });
+  process.on('unhandledRejection', (reason) => console.error('Unhandled rejection:', reason));
+  process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err); process.exit(1); });
 }
 
 bootstrap();
