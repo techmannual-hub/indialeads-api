@@ -21,6 +21,7 @@ import analyticsRoutes from './modules/analytics/analytics.routes';
 import storageRoutes from './modules/storage/storage.service';
 import licenseRoutes from './modules/license/license.service';
 import inboxRoutes from './modules/inbox/inbox.routes';
+import adminRoutes from './modules/admin/admin.routes';
 
 export function createApp(): Application {
   const app = express();
