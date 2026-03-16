@@ -33,6 +33,7 @@ export function createApp(): Application {
     })
   );
   app.use(cors());
+app.options('*', cors());
   app.use(compression());
   app.use(requestLogger);
 
